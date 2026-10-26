@@ -655,6 +655,15 @@ jobs:
           echo "BUILD_START=$(date +%s)" >> $GITHUB_ENV
 
 
+      - name: 🔧 Patch host tools -Werror (移除宿主工具的 -Werror)
+        run: |
+          cd kernel_workspace/common
+          echo "clang18 编译旧版 libbpf 会触发 -Wincompatible-pointer-types-discards-qualifiers"
+          echo "此处移除 tools 下宿主工具 Makefile 的 -Werror（仅影响 CI 辅助工具，不影响 ARM 内核本体）"
+          find tools -maxdepth 3 -name "Makefile*" -exec sed -i 's/-Werror//g' {} \;
+          echo "仍含 Werror 的文件数："
+          grep -rl "Werror" tools --include="Makefile*" 2>/dev/null | wc -l
+
       - name: 🔨 Build Kernel (构建内核)
         run: |
           WORKDIR="$(pwd)"
