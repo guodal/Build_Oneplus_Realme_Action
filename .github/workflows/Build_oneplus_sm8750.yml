@@ -725,6 +725,18 @@ jobs:
           echo "ccache 状态："
           ccache -s
       
+      - name: Upload kernel intermediates (.config / Image)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Kernel_out_${{ env.DEVICES_NAME }}_iSCSI
+          path: |
+            kernel_workspace/common/out/.config
+            kernel_workspace/common/out/arch/arm64/boot/Image
+            kernel_workspace/common/out/arch/arm64/boot/Image.gz
+            kernel_workspace/common/out/arch/arm64/boot/Image.gz-dtb
+          if-no-files-found: warn
+
       - name: 🕒 Calculate build time (计算构建时间)
         run: |
           END=$(date +%s)
