@@ -573,6 +573,7 @@ jobs:
           
       - name: ⚙️ Set BakaSU (设置BakaSU)
         id: ksu_step
+        if: false
         run: |
           cd kernel_workspace
           echo "正在配置BakaSU..."
@@ -600,9 +601,17 @@ jobs:
       - name: 🔧 Set gki_defconfig (设置编译配置) 
         run: |
           cd kernel_workspace
-          echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KPM=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%-Re-TG@qdykernel"' >> ./common/arch/arm64/configs/gki_defconfig
+
+          # ===== iSCSI / 存储扩展 自定义配置 (guodal) =====
+          # iSCSI initiator over TCP
+          echo "CONFIG_ISCSI_TCP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SCSI_ISCSI_ATTRS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # ext3 文件系统挂载支持
+          echo "CONFIG_EXT3_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # 注：以下项原厂内核实测已开启，无需重复追加
+          #   CONFIG_WIREGUARD=y / CONFIG_TCP_CONG_BBR=y
+          #   CONFIG_EXT4_FS=y / CONFIG_EXT4_FS_POSIX_ACL=y / CONFIG_EXT4_FS_SECURITY=y
+          # ===== 自定义配置结束 =====
           
           if [ "${{ env.ENABLE_SUSFS }}" == 'true' ];then
             echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -781,7 +790,7 @@ jobs:
       - name: 📤 Upload AnyKernel3 (上传 Anykernel3)
         uses: actions/upload-artifact@v6
         with:
-         name: AK3_${{ env.KSUVER }}_${{ env.DEVICES_NAME }}_BakaSU
+         name: AK3_${{ env.DEVICES_NAME }}_iSCSI-ext3_noKSU
          path: ./AnyKernel3/*
 
   upload_rekernel:
