@@ -63,7 +63,7 @@ jobs:
           # libcrypto.a is bionic-compatible. OpenSSL Configure accepts CC/AR/RANLIB
           # assignments but NOT NM=, so NM goes through the environment.
           export NM=aarch64-linux-android-nm
-          ./Configure linux64-aarch64 -D__ANDROID_API__=24 --prefix=/opt/ossl --static no-shared no-tests no-dso no-dtls CC=aarch64-linux-android-gcc AR=aarch64-linux-android-ar RANLIB=aarch64-linux-android-ranlib
+          ./Configure linux64-aarch64 -D__ANDROID_API__=24 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls CC=aarch64-linux-android-gcc AR=aarch64-linux-android-ar RANLIB=aarch64-linux-android-ranlib
           make -j"$(nproc)"
           make install_sw
           ls -l /opt/ossl/lib/libcrypto.a
