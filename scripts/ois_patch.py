@@ -355,8 +355,10 @@ def main():
         flags=re.DOTALL,
     )
     # libkmod never exists here, so its pkg-config lines only add noise.
+    # NOTE: the Makefiles invoke pkg-config through the $(PKG_CONFIG) variable,
+    # so match on the argument rather than the command name.
     for mk in ('libopeniscsiusr/Makefile', 'usr/Makefile'):
-        sed_drop(mk, ['pkg-config --cflags libkmod', 'pkg-config --libs libkmod'])
+        sed_drop(mk, ['--cflags libkmod', '--libs libkmod'])
 
     # --------------------------------------------------------------- libmount
     # initiator_common.c only pulls in the header without using any API.
@@ -417,23 +419,44 @@ def main():
         print('WARN usr/log.c already replaced?')
 
     # --------------------------------------------------------- usr/Makefile
+    # Order matters: strip the pkg-config lines FIRST, then edit the in-memory
+    # text, then write once. (An earlier version alternated read/write and
+    # silently lost every edit.)
     mku = 'usr/Makefile'
+    sed_drop(mku, [
+        '--cflags libkmod', '--libs libkmod',
+        '--cflags libsystemd', '--libs libsystemd',
+        '--cflags libcap', '--libs libcap',
+        '--cflags libcrypto', '--libs libcrypto',
+    ])
+
     text = read(mku)
+    # libs that do not exist on Android / that we do not want
     for token in ('-DISNS_SUPPORTED', '-lisns', '-lmount', '-lcap', '-lrt',
                   '-Werror'):
         text = text.replace(token, '')
-    sed_drop(mku, [
-        'pkg-config --cflags libsystemd', 'pkg-config --libs libsystemd',
-        'pkg-config --cflags libcap', 'pkg-config --libs libcap',
-        'pkg-config --cflags libcrypto', 'pkg-config --libs libcrypto',
-    ])
-    text = read(mku)
-    # re-add -lcrypto after the object list so the link order resolves
-    if '-lcrypto' not in text:
-        text = re.sub(r'^LIBS = ', 'LIBS = -lcrypto ', text, count=1,
-                      flags=re.MULTILINE)
-        write(mku, text)
-        print('patched usr/Makefile LIBS += -lcrypto')
+
+    # Normalise the three link rules to:
+    #     $(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lcrypto $(ISCSI_LIB)
+    # Moving $(LDFLAGS) in front of -lcrypto matters: our OpenSSL install prefix
+    # reaches the linker as -L/opt/ossl/lib inside LDFLAGS, and -L must be seen
+    # before the -l that needs it.
+    link_line, n_links = re.subn(
+        r'\t\$\(CC\) \$\(CFLAGS\) \$\^ -o \$@[^\n]*\$\(LDFLAGS\) \$\(ISCSI_LIB\)',
+        '\t$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lcrypto $(ISCSI_LIB)',
+        text)
+    assert n_links == 3, 'expected 3 link rules, rewrote %d' % n_links
+    write(mku, link_line)
+    print('patched usr/Makefile: flags cleaned + %d link rules normalised'
+          % n_links)
+
+    # Fail loudly if any forbidden flag survived.
+    check = read(mku)
+    for bad in ('-Werror', '-DISNS_SUPPORTED', '-lisns', '-lmount', '-lrt',
+                '--cflags libkmod', '--libs libsystemd'):
+        assert bad not in check, 'usr/Makefile still contains %r' % bad
+    assert '-lcrypto' in check, 'usr/Makefile lost -lcrypto'
+    print('verified usr/Makefile (no forbidden flags, -lcrypto present)')
 
     # ------------------------------------------------ libopeniscsiusr/Makefile
     text = read('libopeniscsiusr/Makefile').replace('-Werror', '')
