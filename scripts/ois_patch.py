@@ -435,22 +435,34 @@ def main():
     print('patched usr/initiator.h (pid + lock dir moved under /data/local)')
     assert '"/run/' not in read(init_h), 'a /run path survived in initiator.h'
 
-    # ------------------------------------------------ Android runtime paths
-    # Android has no /run. The IPC socket already uses an AF_UNIX *abstract*
-    # address (setup_abstract_addr in mgmt_ipc.c), so it needs no file; only the
-    # pid file and the lock directory have to move somewhere writable.
-    init_h = 'usr/initiator.h'
-    text = read(init_h)
-    text, n_pid = re.subn(r'#define\s+PID_FILE\s+"[^"]*"',
-                          '#define PID_FILE		"/data/local/var/run/iscsid.pid"',
-                          text, count=1)
-    text, n_lock = re.subn(r'#define\s+LOCK_DIR\s+"[^"]*"',
-                           '#define LOCK_DIR		"/data/local/var/run/iscsi"',
-                           text, count=1)
-    assert n_pid == 1 and n_lock == 1, 'could not relocate PID_FILE/LOCK_DIR'
-    write(init_h, text)
-    print('patched usr/initiator.h (pid + lock dir moved under /data/local)')
-    assert '"/run/' not in read(init_h), 'a /run path survived in initiator.h'
+    # The database root also has to move: iscsiadm writes discovered node
+    # records (nodes/, send_targets/, ifaces/) under it, and a Magisk/KernelSU
+    # module overlays /system read-only, so /etc/iscsi would be unwritable.
+    CFG_ROOT = "/data/local/etc/iscsi"
+    for mk in ('usr/Makefile', 'libopeniscsiusr/Makefile'):
+        t = read(mk)
+        t, n = re.subn(r'DBROOT\s*\?=\s*.*', 'DBROOT ?= ' + CFG_ROOT, t, count=1)
+        assert n == 1, 'could not retarget DBROOT in %s' % mk
+        write(mk, t)
+        print('patched %s (DBROOT -> %s)' % (mk, CFG_ROOT))
+
+    t = read(init_h)
+    t, n_cfg = re.subn(r'#define\s+ISCSI_CONFIG_ROOT\s+"[^"]*"',
+                       '#define ISCSI_CONFIG_ROOT\t"%s/"' % CFG_ROOT,
+                       t, count=1)
+    assert n_cfg == 1, 'could not relocate ISCSI_CONFIG_ROOT'
+    write(init_h, t)
+
+    # belt and braces: the header fallback used when -DISCSI_DB_ROOT is absent
+    t = read('libopeniscsiusr/idbm.h')
+    t, n_db = re.subn(r'#define\s+ISCSI_DB_ROOT\s+"[^"]*"',
+                      '#define ISCSI_DB_ROOT "%s"' % CFG_ROOT, t, count=1)
+    assert n_db == 1, 'could not relocate ISCSI_DB_ROOT fallback'
+    write('libopeniscsiusr/idbm.h', t)
+
+    check = read(init_h) + read('usr/Makefile') + read('libopeniscsiusr/Makefile')
+    assert '"/etc/iscsi' not in check, 'an /etc/iscsi path survived'
+    print('relocated ISCSI_CONFIG_ROOT/ISCSI_DB_ROOT -> %s' % CFG_ROOT)
 
     # --------------------------------------------------------- usr/Makefile
     # Order matters: strip the pkg-config lines FIRST, then edit the in-memory
