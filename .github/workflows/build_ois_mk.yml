@@ -122,6 +122,9 @@ jobs:
           sed -i 's/-lcap//g' usr/Makefile
           # bionic has no separate librt/libpthread/libdl (merged into libc); drop -lrt
           sed -i 's/-lrt//g' usr/Makefile
+          # clang -Werror turns GNU-extension warnings into errors; relax for bionic build
+          sed -i 's/-Werror//g' usr/Makefile
+          sed -i 's/-Werror//g' libopeniscsiusr/Makefile
           sed -i '/pkg-config --cflags libkmod/d' usr/Makefile
           sed -i '/pkg-config --libs libkmod/d' usr/Makefile
           sed -i '/pkg-config --cflags libsystemd/d' usr/Makefile
