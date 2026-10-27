@@ -28,7 +28,17 @@ jobs:
           cd openssl-3.3.2
           export ANDROID_NDK=/opt/android-ndk-r27c
           export ANDROID_API=24
-          export PATH="/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          NDKBIN=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin
+          export PATH="$NDKBIN:$PATH"
+          # NDK r27c only ships clang wrappers; OpenSSL's android-arm64 target
+          # hard-requires gcc-named binaries on $PATH. Create symlinks.
+          ln -sf $NDKBIN/aarch64-linux-android24-clang   $NDKBIN/aarch64-linux-android-gcc
+          ln -sf $NDKBIN/aarch64-linux-android24-clang++ $NDKBIN/aarch64-linux-android-g++
+          ln -sf $NDKBIN/llvm-ar     $NDKBIN/aarch64-linux-android-ar
+          ln -sf $NDKBIN/llvm-ranlib $NDKBIN/aarch64-linux-android-ranlib
+          ln -sf $NDKBIN/llvm-nm     $NDKBIN/aarch64-linux-android-nm
+          ln -sf $NDKBIN/llvm-strip  $NDKBIN/aarch64-linux-android-strip
+          ln -sf $NDKBIN/llvm-objdump $NDKBIN/aarch64-linux-android-objdump
           ./Configure android-arm64 -D__ANDROID_API__=24 --prefix=/opt/ossl --static no-shared no-tests no-dso no-dtls
           make -j"$(nproc)"
           make install_sw
@@ -62,16 +72,23 @@ jobs:
           PY
           # 2) initiator_common.c: drop unused libmount include
           sed -i '/#include <libmount\/libmount.h>/d' usr/initiator_common.c
-          # 3) usr/Makefile: drop isns define + link flags + libkmod/libsystemd pkg-config
+          # 3) usr/Makefile: drop isns define + link flags + all missing libs' pkg-config
           sed -i 's/-DISNS_SUPPORTED//g' usr/Makefile
           sed -i 's/-lisns//g' usr/Makefile
           sed -i 's/-lmount//g' usr/Makefile
+          sed -i 's/-lcap//g' usr/Makefile
           sed -i '/pkg-config --cflags libkmod/d' usr/Makefile
           sed -i '/pkg-config --libs libkmod/d' usr/Makefile
           sed -i '/pkg-config --cflags libsystemd/d' usr/Makefile
           sed -i '/pkg-config --libs libsystemd/d' usr/Makefile
+          sed -i '/pkg-config --cflags libcap/d' usr/Makefile
+          sed -i '/pkg-config --libs libcap/d' usr/Makefile
+          sed -i '/pkg-config --cflags libcrypto/d' usr/Makefile
+          sed -i '/pkg-config --libs libcrypto/d' usr/Makefile
+          # re-add -lcrypto to LIBS (placed AFTER objects in link cmd -> correct order)
+          sed -i 's/^LIBS = /LIBS = -lcrypto /' usr/Makefile
           echo "=== patched usr/Makefile link lines ==="
-          grep -n 'lcrypto\|lmount\|lisns\|ISNS' usr/Makefile || true
+          grep -n 'lcrypto\|lmount\|lisns\|lcap\|ISNS\|pkg-config' usr/Makefile || true
 
       - name: Build open-iscsi (NDK clang, Makefile)
         run: |
@@ -90,8 +107,8 @@ jobs:
           export DBROOT=/data/local/var/lib/iscsi
           make -C libopeniscsiusr
           make -C sysdeps
-          make -C usr
-          make -C utils
+          make -C usr iscsiadm iscsid
+          make -C utils iscsi-iname 2>/dev/null || true
 
       - name: Collect, strip & inspect
         run: |
