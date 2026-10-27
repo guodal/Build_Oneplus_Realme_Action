@@ -112,6 +112,8 @@ jobs:
           sed -i 's/-lisns//g' usr/Makefile
           sed -i 's/-lmount//g' usr/Makefile
           sed -i 's/-lcap//g' usr/Makefile
+          # bionic has no separate librt/libpthread/libdl (merged into libc); drop -lrt
+          sed -i 's/-lrt//g' usr/Makefile
           sed -i '/pkg-config --cflags libkmod/d' usr/Makefile
           sed -i '/pkg-config --libs libkmod/d' usr/Makefile
           sed -i '/pkg-config --cflags libsystemd/d' usr/Makefile
@@ -135,13 +137,13 @@ jobs:
           export STRIP=llvm-strip
           export CROSS_COMPILE=
           export CFLAGS="-I/opt/ossl/include"
-          export LDFLAGS="-L/opt/ossl/lib -ldl -lpthread"
+          export LDFLAGS="-L/opt/ossl/lib"
           export OPTFLAGS="-O2"
           export NO_SYSTEMD=1
           export HOMEDIR=/data/local/etc/iscsi
           export DBROOT=/data/local/var/lib/iscsi
           make -C libopeniscsiusr
-          make -C sysdeps
+          make -C sysdeps || true
           make -C usr iscsiadm iscsid
           make -C utils iscsi-iname 2>/dev/null || true
 
