@@ -418,6 +418,40 @@ def main():
     else:
         print('WARN usr/log.c already replaced?')
 
+    # ------------------------------------------------ Android runtime paths
+    # Android has no /run. The IPC socket already uses an AF_UNIX *abstract*
+    # address (setup_abstract_addr in mgmt_ipc.c), so it needs no file; only the
+    # pid file and the lock directory have to move somewhere writable.
+    init_h = 'usr/initiator.h'
+    text = read(init_h)
+    text, n_pid = re.subn(r'#define\s+PID_FILE\s+"[^"]*"',
+                          '#define PID_FILE\t\t"/data/local/var/run/iscsid.pid"',
+                          text, count=1)
+    text, n_lock = re.subn(r'#define\s+LOCK_DIR\s+"[^"]*"',
+                           '#define LOCK_DIR\t\t"/data/local/var/run/iscsi"',
+                           text, count=1)
+    assert n_pid == 1 and n_lock == 1, 'could not relocate PID_FILE/LOCK_DIR'
+    write(init_h, text)
+    print('patched usr/initiator.h (pid + lock dir moved under /data/local)')
+    assert '"/run/' not in read(init_h), 'a /run path survived in initiator.h'
+
+    # ------------------------------------------------ Android runtime paths
+    # Android has no /run. The IPC socket already uses an AF_UNIX *abstract*
+    # address (setup_abstract_addr in mgmt_ipc.c), so it needs no file; only the
+    # pid file and the lock directory have to move somewhere writable.
+    init_h = 'usr/initiator.h'
+    text = read(init_h)
+    text, n_pid = re.subn(r'#define\s+PID_FILE\s+"[^"]*"',
+                          '#define PID_FILE		"/data/local/var/run/iscsid.pid"',
+                          text, count=1)
+    text, n_lock = re.subn(r'#define\s+LOCK_DIR\s+"[^"]*"',
+                           '#define LOCK_DIR		"/data/local/var/run/iscsi"',
+                           text, count=1)
+    assert n_pid == 1 and n_lock == 1, 'could not relocate PID_FILE/LOCK_DIR'
+    write(init_h, text)
+    print('patched usr/initiator.h (pid + lock dir moved under /data/local)')
+    assert '"/run/' not in read(init_h), 'a /run path survived in initiator.h'
+
     # --------------------------------------------------------- usr/Makefile
     # Order matters: strip the pkg-config lines FIRST, then edit the in-memory
     # text, then write once. (An earlier version alternated read/write and
