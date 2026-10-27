@@ -7,6 +7,11 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
+      # Our own repo carries scripts/ois_patch.py -- the single source of truth
+      # for every Android/bionic source tweak.
+      - name: Checkout build repo
+        uses: actions/checkout@v4
+
       - name: Install host build deps
         run: |
           sudo apt-get update -qq
@@ -20,125 +25,46 @@ jobs:
           NDKBIN=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin
           echo "NDK=/opt/android-ndk-r27c" >> "$GITHUB_ENV"
           echo "NDKBIN=$NDKBIN" >> "$GITHUB_ENV"
-          # resolve the REAL aarch64 clang wrapper (NDK r27 ships versioned names
-          # like aarch64-linux-android24-clang; do NOT hardcode the number)
+          # NDK r27 ships VERSIONED clang wrappers (aarch64-linux-android24-clang);
+          # do not hardcode the API number.
           CLANG=$(ls $NDKBIN/aarch64-linux-android24-clang 2>/dev/null || ls $NDKBIN/aarch64-linux-android*-clang 2>/dev/null | grep -v '\+\+' | head -1)
           echo "CLANG=$CLANG" >> "$GITHUB_ENV"
           echo "detected clang wrapper: $CLANG"
-          ls -1 $NDKBIN | grep -i 'aarch64-linux-android.*clang' | head
 
-      - name: Cross-compile OpenSSL (static libcrypto, bionic via NDK clang)
+      - name: Cross-compile OpenSSL (static libcrypto for bionic)
         run: |
           cd /opt
           curl -fsSL -o ossl.tar.gz https://www.openssl.org/source/openssl-3.3.2.tar.gz
           tar xzf ossl.tar.gz
           cd openssl-3.3.2
-          NDKBIN=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin
-          export PATH="$NDKBIN:$PATH"
-          # NDK r27 ships versioned clang wrappers (aarch64-linux-android24-clang)
-          # that ALREADY embed --target=aarch64-linux-android24 + the bionic sysroot.
-          # We therefore use the generic 'linux64-aarch64' target and set CC to that
-          # wrapper. This sidesteps OpenSSL's 15-android.conf 'android-arm64' probe,
-          # which is broken for NDK r27 (no top-level $ndk/sysroot and no legacy
-          # aarch64-linux-android-gcc), and produces a libcrypto.a linked against
-          # bionic libc — exactly what open-iscsi needs on Android.
+          export PATH="/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          # The NDK's versioned clang wrapper already embeds
+          # --target=aarch64-linux-android24 + the bionic sysroot, so using the
+          # generic 'linux-aarch64' target yields a bionic-linked libcrypto.a
+          # while sidestepping OpenSSL's android-arm64 probe (15-android.conf),
+          # which is broken against NDK r27's layout.
           export CC=aarch64-linux-android24-clang
           export CXX=aarch64-linux-android24-clang++
           export AR=llvm-ar
           export RANLIB=llvm-ranlib
           export NM=llvm-nm
-          ./Configure linux-aarch64 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls no-afalgeng no-ui-console no-devcryptoeng
+          ./Configure linux-aarch64 --prefix=/opt/ossl \
+            no-shared no-tests no-dso no-dtls no-afalgeng no-ui-console no-devcryptoeng
           make -j"$(nproc)"
           make install_sw
           ls -l /opt/ossl/lib/libcrypto.a
-          echo "=== verify libcrypto.a is aarch64 / bionic ==="
-          llvm-readelf -h /opt/ossl/lib/libcrypto.a 2>/dev/null | grep -i 'machine\|class' | head -1 || true
+          export PATH="/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          llvm-readelf -h /opt/ossl/lib/libcrypto.a 2>/dev/null | grep -i 'Machine' | head -2
 
       - name: Clone open-iscsi 2.1.10
-        run: git clone --depth 1 --branch 2.1.10 https://github.com/open-iscsi/open-iscsi.git
+        run: git clone --depth 1 --branch 2.1.10 https://github.com/open-iscsi/open-iscsi.git open-iscsi
 
-      - name: Patch open-iscsi (drop kmod / libmount / isns)
+      - name: Patch open-iscsi for Android/bionic
         run: |
           cd open-iscsi
-          # 1) transport.c: remove libkmod header + stub the module loader
-          sed -i '/#include <libkmod.h>/d' usr/transport.c
-          python3 - <<'PY'
-          import re
-          p='usr/transport.c'
-          s=open(p).read()
-          stub=(
-              'int transport_load_kmod(char *transport_name)\n'
-              '{\n'
-              '\t/*\n'
-              '\t * On Android the iscsi_tcp transport is built into the kernel,\n'
-              '\t * so there is no kernel module to load. Just report success.\n'
-              '\t */\n'
-              '\tlog_debug(1, "transport_load_kmod(%s): built-in, skipping", transport_name);\n'
-              '\treturn 0;\n'
-              '}\n'
-          )
-          s2=re.sub(r'int transport_load_kmod\(char \*transport_name\)\s*\{.*?\n\}\n', stub, s, count=1, flags=re.DOTALL)
-          open(p,'w').write(s2)
-          PY
-          # 1b) libopeniscsiusr/iface.c: drop libkmod header + stub _load_kernel_module
-          #     (on Android iscsi_tcp is built into the kernel, no module to load)
-          sed -i '/#include <libkmod.h>/d' libopeniscsiusr/iface.c
-          python3 - <<'PY'
-          import re
-          p='libopeniscsiusr/iface.c'
-          s=open(p).read()
-          stub=(
-              'static int _load_kernel_module(struct iscsi_context *ctx, const char *drv_name)\n'
-              '{\n'
-              '\t(void)ctx;\n'
-              '\t(void)drv_name;\n'
-              '\t/*\n'
-              '\t * On Android the iscsi_tcp transport and related offload drivers\n'
-              '\t * are built into the kernel, so there is no kernel module to load\n'
-              '\t * via libkmod. Just report success.\n'
-              '\t */\n'
-              '\treturn LIBISCSI_OK;\n'
-              '}\n'
-          )
-          s2=re.sub(r'static int _load_kernel_module\(struct iscsi_context \*ctx, const char \*drv_name\)\s*\{.*?return rc;\n\}\n', stub, s, count=1, flags=re.DOTALL)
-          open(p,'w').write(s2)
-          PY
-          sed -i '/pkg-config --cflags libkmod/d' libopeniscsiusr/Makefile
-          sed -i '/pkg-config --libs libkmod/d' libopeniscsiusr/Makefile
-          # 2) initiator_common.c: drop unused libmount include
-          sed -i '/#include <libmount\/libmount.h>/d' usr/initiator_common.c
-          # 2b) usr/log.h: drop local union semun (bionic's <sys/sem.h> already defines it)
-          python3 - <<'PY'
-          import re
-          p='usr/log.h'
-          s=open(p).read()
-          s2=re.sub(r'union semun\s*\{[^}]*\};', '', s, count=1)
-          open(p,'w').write(s2)
-          PY
-          # 3) usr/Makefile: drop isns define + link flags + all missing libs' pkg-config
-          sed -i 's/-DISNS_SUPPORTED//g' usr/Makefile
-          sed -i 's/-lisns//g' usr/Makefile
-          sed -i 's/-lmount//g' usr/Makefile
-          sed -i 's/-lcap//g' usr/Makefile
-          # bionic has no separate librt/libpthread/libdl (merged into libc); drop -lrt
-          sed -i 's/-lrt//g' usr/Makefile
-          # clang -Werror turns GNU-extension warnings into errors; relax for bionic build
-          sed -i 's/-Werror//g' usr/Makefile
-          sed -i 's/-Werror//g' libopeniscsiusr/Makefile
-          sed -i '/pkg-config --cflags libkmod/d' usr/Makefile
-          sed -i '/pkg-config --libs libkmod/d' usr/Makefile
-          sed -i '/pkg-config --cflags libsystemd/d' usr/Makefile
-          sed -i '/pkg-config --libs libsystemd/d' usr/Makefile
-          sed -i '/pkg-config --cflags libcap/d' usr/Makefile
-          sed -i '/pkg-config --libs libcap/d' usr/Makefile
-          sed -i '/pkg-config --cflags libcrypto/d' usr/Makefile
-          sed -i '/pkg-config --libs libcrypto/d' usr/Makefile
-          # re-add -lcrypto to LIBS (placed AFTER objects in link cmd -> correct order)
-          sed -i 's/^LIBS = /LIBS = -lcrypto /' usr/Makefile
-          echo "=== patched usr/Makefile link lines ==="
-          grep -n 'lcrypto\|lmount\|lisns\|lcap\|ISNS\|pkg-config' usr/Makefile || true
+          python3 "$GITHUB_WORKSPACE/scripts/ois_patch.py" .
 
-      - name: Build open-iscsi (NDK clang, Makefile)
+      - name: Build open-iscsi (NDK clang)
         run: |
           cd open-iscsi
           export PATH="${{ env.NDKBIN }}:$PATH"
@@ -155,7 +81,7 @@ jobs:
           export DBROOT=/data/local/var/lib/iscsi
           make -C libopeniscsiusr
           make -C sysdeps || true
-          make -C usr iscsiadm iscsid
+          make -C usr iscsiadm iscsid iscsistart
           make -C utils iscsi-iname 2>/dev/null || true
 
       - name: Collect, strip & inspect
@@ -163,15 +89,22 @@ jobs:
           mkdir -p ois_out
           cp open-iscsi/usr/iscsiadm open-iscsi/usr/iscsid open-iscsi/usr/iscsistart ois_out/ 2>/dev/null || true
           cp open-iscsi/utils/iscsi-iname ois_out/ 2>/dev/null || true
-          cp open-iscsi/libopeniscsiusr/libopeniscsiusr.so ois_out/ 2>/dev/null || true
+          cp open-iscsi/libopeniscsiusr/libopeniscsiusr.so* ois_out/ 2>/dev/null || true
           for b in ois_out/iscsiadm ois_out/iscsid ois_out/iscsistart; do
             llvm-strip --strip-unneeded "$b" 2>/dev/null || true
           done
           echo "=== file ==="
-          file ois_out/iscsiadm ois_out/iscsid ois_out/iscsistart
-          echo "=== iscsiadm NEEDED (external runtime deps) ==="
-          llvm-readelf -d ois_out/iscsiadm 2>/dev/null | grep -i needed || true
-          echo "=== libopeniscsiusr.so present? ==="
+          FILES=""
+          for b in ois_out/iscsiadm ois_out/iscsid ois_out/iscsistart; do
+            [ -f "$b" ] && FILES="$FILES $b"
+          done
+          file $FILES
+          echo "=== NEEDED entries (runtime deps) ==="
+          for b in $FILES; do
+            echo "--- $b ---"
+            llvm-readelf -d "$b" 2>/dev/null | grep -i 'NEEDED\|RUNPATH' || true
+          done
+          echo "=== directory listing ==="
           ls -l ois_out/
 
       - name: Upload artifact
