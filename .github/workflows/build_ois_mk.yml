@@ -60,10 +60,14 @@ jobs:
           # Use the generic linux64-aarch64 target to SKIP OpenSSL's NDK gcc probe
           # (it rejects clang-based wrappers). Our wrappers already force
           # --target=aarch64-linux-android24 + bionic sysroot, so the produced
-          # libcrypto.a is bionic-compatible. OpenSSL Configure accepts CC/AR/RANLIB
-          # assignments but NOT NM=, so NM goes through the environment.
+          # libcrypto.a is bionic-compatible. OpenSSL 3.3.2 Configure does NOT accept
+          # CC/AR/RANLIB/NM as command-line assignments (they trip the usage error),
+          # so export them as environment variables instead.
+          export CC=aarch64-linux-android-gcc
+          export AR=aarch64-linux-android-ar
+          export RANLIB=aarch64-linux-android-ranlib
           export NM=aarch64-linux-android-nm
-          ./Configure linux64-aarch64 -D__ANDROID_API__=24 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls CC=aarch64-linux-android-gcc AR=aarch64-linux-android-ar RANLIB=aarch64-linux-android-ranlib
+          ./Configure linux64-aarch64 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls
           make -j"$(nproc)"
           make install_sw
           ls -l /opt/ossl/lib/libcrypto.a
