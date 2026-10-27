@@ -47,7 +47,7 @@ jobs:
           export AR=llvm-ar
           export RANLIB=llvm-ranlib
           export NM=llvm-nm
-          ./Configure linux64-aarch64 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls no-afalgeng no-ui-console no-devcryptoeng
+          ./Configure linux-aarch64 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls no-afalgeng no-ui-console no-devcryptoeng
           make -j"$(nproc)"
           make install_sw
           ls -l /opt/ossl/lib/libcrypto.a
