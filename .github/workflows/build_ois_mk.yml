@@ -25,11 +25,22 @@ jobs:
           NDKBIN=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin
           echo "NDK=/opt/android-ndk-r27c" >> "$GITHUB_ENV"
           echo "NDKBIN=$NDKBIN" >> "$GITHUB_ENV"
-          # NDK r27 ships VERSIONED clang wrappers (aarch64-linux-android24-clang);
-          # do not hardcode the API number.
-          CLANG=$(ls $NDKBIN/aarch64-linux-android24-clang 2>/dev/null || ls $NDKBIN/aarch64-linux-android*-clang 2>/dev/null | grep -v '\+\+' | head -1)
-          echo "CLANG=$CLANG" >> "$GITHUB_ENV"
-          echo "detected clang wrapper: $CLANG"
+          # Target Android API 33 rather than the NDK floor: bionic only exposes
+          # glob()/getentropy() from API 28 onwards, and open-iscsi needs glob().
+          # Prefer the highest API level the toolchain actually ships.
+          API=""
+          for want in 33 30 28 26 24; do
+            if [ -e "$NDKBIN/aarch64-linux-android${want}-clang" ]; then
+              API=$want; break
+            fi
+          done
+          if [ -z "$API" ]; then
+            echo "no usable aarch64 clang wrapper in $NDKBIN"; ls "$NDKBIN" | head; exit 1
+          fi
+          echo "ANDROID_API=$API" >> "$GITHUB_ENV"
+          echo "CLANG=$NDKBIN/aarch64-linux-android${API}-clang" >> "$GITHUB_ENV"
+          echo "using ANDROID_API=$API"
+          ls -1 "$NDKBIN" | grep -E 'aarch64-linux-android[0-9]+-clang$' | head
 
       - name: Cross-compile OpenSSL (static libcrypto for bionic)
         run: |
@@ -43,8 +54,8 @@ jobs:
           # generic 'linux-aarch64' target yields a bionic-linked libcrypto.a
           # while sidestepping OpenSSL's android-arm64 probe (15-android.conf),
           # which is broken against NDK r27's layout.
-          export CC=aarch64-linux-android24-clang
-          export CXX=aarch64-linux-android24-clang++
+          export CC=aarch64-linux-android${{ env.ANDROID_API }}-clang
+          export CXX=aarch64-linux-android${{ env.ANDROID_API }}-clang++
           export AR=llvm-ar
           export RANLIB=llvm-ranlib
           export NM=llvm-nm
