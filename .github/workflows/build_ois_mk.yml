@@ -107,6 +107,14 @@ jobs:
           sed -i '/pkg-config --libs libkmod/d' libopeniscsiusr/Makefile
           # 2) initiator_common.c: drop unused libmount include
           sed -i '/#include <libmount\/libmount.h>/d' usr/initiator_common.c
+          # 2b) usr/log.h: drop local union semun (bionic's <sys/sem.h> already defines it)
+          python3 - <<'PY'
+          import re
+          p='usr/log.h'
+          s=open(p).read()
+          s2=re.sub(r'union semun\s*\{[^}]*\};', '', s, count=1)
+          open(p,'w').write(s2)
+          PY
           # 3) usr/Makefile: drop isns define + link flags + all missing libs' pkg-config
           sed -i 's/-DISNS_SUPPORTED//g' usr/Makefile
           sed -i 's/-lisns//g' usr/Makefile
