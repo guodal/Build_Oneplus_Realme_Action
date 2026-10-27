@@ -90,6 +90,8 @@ jobs:
           stub=(
               'static int _load_kernel_module(struct iscsi_context *ctx, const char *drv_name)\n'
               '{\n'
+              '\t(void)ctx;\n'
+              '\t(void)drv_name;\n'
               '\t/*\n'
               '\t * On Android the iscsi_tcp transport and related offload drivers\n'
               '\t * are built into the kernel, so there is no kernel module to load\n'
