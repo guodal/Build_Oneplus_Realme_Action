@@ -1,0 +1,117 @@
+name: open-iscsi aarch64 (bionic, NDK Makefile)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install host build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential pkg-config curl unzip xz-utils perl
+
+      - name: Install Android NDK r27c
+        run: |
+          cd /opt
+          curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
+          unzip -q ndk.zip
+          echo "NDK=/opt/android-ndk-r27c" >> "$GITHUB_ENV"
+          echo "NDKBIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_ENV"
+
+      - name: Cross-compile OpenSSL (static libcrypto, android-arm64)
+        run: |
+          cd /opt
+          curl -fsSL -o ossl.tar.gz https://www.openssl.org/source/openssl-3.3.2.tar.gz
+          tar xzf ossl.tar.gz
+          cd openssl-3.3.2
+          export PATH="${{ env.NDKBIN }}:$PATH"
+          export CC=aarch64-linux-android24-clang
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          ./Configure android-arm64 -D__ANDROID_API__=24 --prefix=/opt/ossl --static no-shared no-tests no-dso no-dtls
+          make -j"$(nproc)"
+          make install_sw
+          ls -l /opt/ossl/lib/libcrypto.a
+
+      - name: Clone open-iscsi 2.1.10
+        run: git clone --depth 1 --branch 2.1.10 https://github.com/open-iscsi/open-iscsi.git
+
+      - name: Patch open-iscsi (drop kmod / libmount / isns)
+        run: |
+          cd open-iscsi
+          # 1) transport.c: remove libkmod header + stub the module loader
+          sed -i '/#include <libkmod.h>/d' usr/transport.c
+          python3 - <<'PY'
+          import re
+          p='usr/transport.c'
+          s=open(p).read()
+          stub=(
+              'int transport_load_kmod(char *transport_name)\n'
+              '{\n'
+              '\t/*\n'
+              '\t * On Android the iscsi_tcp transport is built into the kernel,\n'
+              '\t * so there is no kernel module to load. Just report success.\n'
+              '\t */\n'
+              '\tlog_debug(1, "transport_load_kmod(%s): built-in, skipping", transport_name);\n'
+              '\treturn 0;\n'
+              '}\n'
+          )
+          s2=re.sub(r'int transport_load_kmod\(char \*transport_name\)\s*\{.*?\n\}\n', stub, s, count=1, flags=re.DOTALL)
+          open(p,'w').write(s2)
+          PY
+          # 2) initiator_common.c: drop unused libmount include
+          sed -i '/#include <libmount\/libmount.h>/d' usr/initiator_common.c
+          # 3) usr/Makefile: drop isns define + link flags + libkmod/libsystemd pkg-config
+          sed -i 's/-DISNS_SUPPORTED//g' usr/Makefile
+          sed -i 's/-lisns//g' usr/Makefile
+          sed -i 's/-lmount//g' usr/Makefile
+          sed -i '/pkg-config --cflags libkmod/d' usr/Makefile
+          sed -i '/pkg-config --libs libkmod/d' usr/Makefile
+          sed -i '/pkg-config --cflags libsystemd/d' usr/Makefile
+          sed -i '/pkg-config --libs libsystemd/d' usr/Makefile
+          echo "=== patched usr/Makefile link lines ==="
+          grep -n 'lcrypto\|lmount\|lisns\|ISNS' usr/Makefile || true
+
+      - name: Build open-iscsi (NDK clang, Makefile)
+        run: |
+          cd open-iscsi
+          export PATH="${{ env.NDKBIN }}:$PATH"
+          export CC=aarch64-linux-android24-clang
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          export STRIP=llvm-strip
+          export CROSS_COMPILE=aarch64-linux-android24-
+          export CFLAGS="-I/opt/ossl/include"
+          export LDFLAGS="-L/opt/ossl/lib -ldl -lpthread"
+          export OPTFLAGS="-O2"
+          export NO_SYSTEMD=1
+          export HOMEDIR=/data/local/etc/iscsi
+          export DBROOT=/data/local/var/lib/iscsi
+          make -C libopeniscsiusr
+          make -C sysdeps
+          make -C usr
+          make -C utils
+
+      - name: Collect, strip & inspect
+        run: |
+          mkdir -p ois_out
+          cp open-iscsi/usr/iscsiadm open-iscsi/usr/iscsid open-iscsi/usr/iscsistart ois_out/ 2>/dev/null || true
+          cp open-iscsi/utils/iscsi-iname ois_out/ 2>/dev/null || true
+          cp open-iscsi/libopeniscsiusr/libopeniscsiusr.so ois_out/ 2>/dev/null || true
+          for b in ois_out/iscsiadm ois_out/iscsid ois_out/iscsistart; do
+            llvm-strip --strip-unneeded "$b" 2>/dev/null || true
+          done
+          echo "=== file ==="
+          file ois_out/iscsiadm ois_out/iscsid ois_out/iscsistart
+          echo "=== iscsiadm NEEDED (external runtime deps) ==="
+          llvm-readelf -d ois_out/iscsiadm 2>/dev/null | grep -i needed || true
+          echo "=== libopeniscsiusr.so present? ==="
+          ls -l ois_out/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-iscsi-aarch64-android
+          path: ois_out/*
