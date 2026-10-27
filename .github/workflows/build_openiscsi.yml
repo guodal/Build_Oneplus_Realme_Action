@@ -1,0 +1,70 @@
+name: build-openiscsi-static-aarch64
+
+on:
+  workflow_dispatch:
+    inputs:
+      open_iscsi_ver:
+        description: 'open-iscsi tag, e.g. 2.1.10'
+        required: false
+        default: '2.1.10'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Android NDK
+        run: |
+          cd /opt
+          curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
+          unzip -q ndk.zip
+          echo "NDK=/opt/android-ndk-r27c" >> "$GITHUB_ENV"
+
+      - name: Install meson & ninja
+        run: pip install --break-system-packages meson ninja || pip install meson ninja
+
+      - name: Clone open-iscsi
+        run: git clone --depth 1 --branch "${{ github.event.inputs.open_iscsi_ver }}" https://github.com/open-iscsi/open-iscsi.git
+
+      - name: Write meson cross file (NDK / bionic, aarch64)
+        run: |
+          cat > /opt/cross.ini <<EOF
+          [binaries]
+          c = '${{ env.NDK }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang'
+          cpp = '${{ env.NDK }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++'
+          ar = '${{ env.NDK }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
+          strip = '${{ env.NDK }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
+          [host_machine]
+          system = 'linux'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          EOF
+
+      - name: Configure (meson, static, disable isns/systemd/kmod/iscsiuio)
+        run: |
+          cd open-iscsi
+          python3 -m meson setup build --cross-file /opt/cross.ini \
+            -Ddefault_library=static \
+            -Disns_supported=false \
+            -Dno_systemd=true \
+            -Discsiuio=false \
+            -Dkmod=disabled
+
+      - name: Build
+        run: python3 -m meson compile -C open-iscsi/build
+
+      - name: Collect binaries
+        run: |
+          mkdir -p out
+          for b in iscsiadm iscsid iscsistart; do
+            f=$(find open-iscsi/build -maxdepth 2 -type f -name "$b" | head -n1)
+            if [ -n "$f" ]; then cp "$f" out/; fi
+          done
+          ls -l out || true
+          file out/* || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iscsi-static-aarch64
+          path: out/*
