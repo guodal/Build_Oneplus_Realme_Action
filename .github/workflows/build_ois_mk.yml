@@ -18,7 +18,7 @@ jobs:
           curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
           unzip -q ndk.zip
           echo "NDK=/opt/android-ndk-r27c" >> "$GITHUB_ENV"
-          echo "NDKBIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_ENV"
+          echo "NDKBIN=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_ENV"
 
       - name: Cross-compile OpenSSL (static libcrypto, android-arm64)
         run: |
@@ -26,10 +26,9 @@ jobs:
           curl -fsSL -o ossl.tar.gz https://www.openssl.org/source/openssl-3.3.2.tar.gz
           tar xzf ossl.tar.gz
           cd openssl-3.3.2
-          export PATH="${{ env.NDKBIN }}:$PATH"
-          export CC=aarch64-linux-android24-clang
-          export AR=llvm-ar
-          export RANLIB=llvm-ranlib
+          export ANDROID_NDK=/opt/android-ndk-r27c
+          export ANDROID_API=24
+          export PATH="/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
           ./Configure android-arm64 -D__ANDROID_API__=24 --prefix=/opt/ossl --static no-shared no-tests no-dso no-dtls
           make -j"$(nproc)"
           make install_sw
