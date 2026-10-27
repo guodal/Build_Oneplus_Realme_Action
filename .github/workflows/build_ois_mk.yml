@@ -17,8 +17,15 @@ jobs:
           cd /opt
           curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
           unzip -q ndk.zip
+          NDKBIN=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin
           echo "NDK=/opt/android-ndk-r27c" >> "$GITHUB_ENV"
-          echo "NDKBIN=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_ENV"
+          echo "NDKBIN=$NDKBIN" >> "$GITHUB_ENV"
+          # resolve the REAL aarch64 clang wrapper (NDK r27 ships versioned names
+          # like aarch64-linux-android24-clang; do NOT hardcode the number)
+          CLANG=$(ls $NDKBIN/aarch64-linux-android*-clang 2>/dev/null | grep -v '\+\+' | head -1)
+          echo "CLANG=$CLANG" >> "$GITHUB_ENV"
+          echo "detected clang wrapper: $CLANG"
+          ls -1 $NDKBIN | grep -i 'aarch64-linux-android.*clang' | head
 
       - name: Cross-compile OpenSSL (static libcrypto, android-arm64)
         run: |
@@ -31,14 +38,17 @@ jobs:
           NDKBIN=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin
           export PATH="$NDKBIN:$PATH"
           # NDK r27c only ships clang wrappers; OpenSSL's android-arm64 target
-          # hard-requires gcc-named binaries on $PATH. Create symlinks.
-          ln -sf $NDKBIN/aarch64-linux-android24-clang   $NDKBIN/aarch64-linux-android-gcc
-          ln -sf $NDKBIN/aarch64-linux-android24-clang++ $NDKBIN/aarch64-linux-android-g++
+          # hard-requires gcc-named binaries on $PATH. Symlink them to the
+          # REAL clang wrapper resolved during the NDK install step.
+          ln -sf "$CLANG" $NDKBIN/aarch64-linux-android-gcc
+          CLANGP=$(ls $NDKBIN/aarch64-linux-android*-clang++ 2>/dev/null | head -1)
+          [ -n "$CLANGP" ] && ln -sf "$CLANGP" $NDKBIN/aarch64-linux-android-g++
           ln -sf $NDKBIN/llvm-ar     $NDKBIN/aarch64-linux-android-ar
           ln -sf $NDKBIN/llvm-ranlib $NDKBIN/aarch64-linux-android-ranlib
           ln -sf $NDKBIN/llvm-nm     $NDKBIN/aarch64-linux-android-nm
           ln -sf $NDKBIN/llvm-strip  $NDKBIN/aarch64-linux-android-strip
           ln -sf $NDKBIN/llvm-objdump $NDKBIN/aarch64-linux-android-objdump
+          ls -l $NDKBIN/aarch64-linux-android-gcc
           ./Configure android-arm64 -D__ANDROID_API__=24 --prefix=/opt/ossl --static no-shared no-tests no-dso no-dtls
           make -j"$(nproc)"
           make install_sw
@@ -94,11 +104,11 @@ jobs:
         run: |
           cd open-iscsi
           export PATH="${{ env.NDKBIN }}:$PATH"
-          export CC=aarch64-linux-android24-clang
+          export CC="${{ env.CLANG }}"
           export AR=llvm-ar
           export RANLIB=llvm-ranlib
           export STRIP=llvm-strip
-          export CROSS_COMPILE=aarch64-linux-android24-
+          export CROSS_COMPILE=
           export CFLAGS="-I/opt/ossl/include"
           export LDFLAGS="-L/opt/ossl/lib -ldl -lpthread"
           export OPTFLAGS="-O2"
