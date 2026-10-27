@@ -80,6 +80,29 @@ jobs:
           s2=re.sub(r'int transport_load_kmod\(char \*transport_name\)\s*\{.*?\n\}\n', stub, s, count=1, flags=re.DOTALL)
           open(p,'w').write(s2)
           PY
+          # 1b) libopeniscsiusr/iface.c: drop libkmod header + stub _load_kernel_module
+          #     (on Android iscsi_tcp is built into the kernel, no module to load)
+          sed -i '/#include <libkmod.h>/d' libopeniscsiusr/iface.c
+          python3 - <<'PY'
+          import re
+          p='libopeniscsiusr/iface.c'
+          s=open(p).read()
+          stub=(
+              'static int _load_kernel_module(struct iscsi_context *ctx, const char *drv_name)\n'
+              '{\n'
+              '\t/*\n'
+              '\t * On Android the iscsi_tcp transport and related offload drivers\n'
+              '\t * are built into the kernel, so there is no kernel module to load\n'
+              '\t * via libkmod. Just report success.\n'
+              '\t */\n'
+              '\treturn LIBISCSI_OK;\n'
+              '}\n'
+          )
+          s2=re.sub(r'static int _load_kernel_module\(struct iscsi_context \*ctx, const char \*drv_name\)\s*\{.*?return rc;\n\}\n', stub, s, count=1, flags=re.DOTALL)
+          open(p,'w').write(s2)
+          PY
+          sed -i '/pkg-config --cflags libkmod/d' libopeniscsiusr/Makefile
+          sed -i '/pkg-config --libs libkmod/d' libopeniscsiusr/Makefile
           # 2) initiator_common.c: drop unused libmount include
           sed -i '/#include <libmount\/libmount.h>/d' usr/initiator_common.c
           # 3) usr/Makefile: drop isns define + link flags + all missing libs' pkg-config
