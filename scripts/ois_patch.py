@@ -435,6 +435,22 @@ def main():
     print('patched usr/initiator.h (pid + lock dir moved under /data/local)')
     assert '"/run/' not in read(init_h), 'a /run path survived in initiator.h'
 
+    # libopeniscsiusr/idbm.c carries its OWN
+    #     #ifndef LOCK_DIR
+    #     #define LOCK_DIR  "/run/lock/iscsi"
+    # and it does NOT include usr/initiator.h, so the edit above never reaches
+    # it. iscsiadm links this library and its _idbm_lock() opens LOCK_DIR at
+    # runtime -- on Android's erofs root /run/lock/iscsi is unwritable, so every
+    # iscsiadm -m node / -m session / -m discovery call dies there. Move it too.
+    sub_once(
+        'libopeniscsiusr/idbm.c',
+        r'#define\s+LOCK_DIR\s+"[^"]*"',
+        '#define LOCK_DIR\t\t"/data/local/var/run/iscsi"',
+    )
+    assert '"/run/lock/iscsi' not in read('libopeniscsiusr/idbm.c'), \
+        'LOCK_DIR still /run/lock/iscsi in libopeniscsiusr/idbm.c'
+    print('patched libopeniscsiusr/idbm.c (LOCK_DIR -> /data/local/var/run/iscsi)')
+
     # The database root also has to move: iscsiadm writes discovered node
     # records (nodes/, send_targets/, ifaces/) under it, and a Magisk/KernelSU
     # module overlays /system read-only, so /etc/iscsi would be unwritable.
