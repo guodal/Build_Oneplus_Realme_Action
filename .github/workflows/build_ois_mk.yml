@@ -27,46 +27,32 @@ jobs:
           echo "detected clang wrapper: $CLANG"
           ls -1 $NDKBIN | grep -i 'aarch64-linux-android.*clang' | head
 
-      - name: Cross-compile OpenSSL (static libcrypto, android-arm64)
+      - name: Cross-compile OpenSSL (static libcrypto, bionic via NDK clang)
         run: |
           cd /opt
           curl -fsSL -o ossl.tar.gz https://www.openssl.org/source/openssl-3.3.2.tar.gz
           tar xzf ossl.tar.gz
           cd openssl-3.3.2
-          export ANDROID_NDK=/opt/android-ndk-r27c
-          export ANDROID_API=24
           NDKBIN=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin
           export PATH="$NDKBIN:$PATH"
-          SYSROOT=$(cd "$NDKBIN/../sysroot" 2>/dev/null && pwd)
-          echo "SYSROOT=$SYSROOT"
-          # OpenSSL's android-arm64 target (15-android.conf) requires gcc/clang-named
-          # binaries whose resolved path lives under $ANDROID_NDK. NDK r27 only ships
-          # VERSIONED clang wrappers (aarch64-linux-android24-clang), so neither
-          # aarch64-linux-android-gcc nor aarch64-linux-android-clang exists. The helper
-          # probes whichever matches $CC (default "clang") and dies if the resolved path
-          # is not under $ndk. We write thin wrappers for BOTH names (column-0 shebang via
-          # printf) that call the real clang with --target=aarch64-linux-android24 + bionic
-          # sysroot; their location under $ndk satisfies the probe.
-          for t in gcc g++ clang clang++; do
-            case $t in
-              gcc|clang)   real=clang;;
-              g++|clang++) real=clang++;;
-            esac
-            printf '#!/bin/sh\n' > "$NDKBIN/aarch64-linux-android-$t"
-            printf 'exec "%s/%s" --target=aarch64-linux-android24 --sysroot=%s -fuse-ld=lld "$@"\n' "$NDKBIN" "$real" "$SYSROOT" >> "$NDKBIN/aarch64-linux-android-$t"
-            chmod +x "$NDKBIN/aarch64-linux-android-$t"
-          done
-          ln -sf $NDKBIN/llvm-ar     $NDKBIN/aarch64-linux-android-ar
-          ln -sf $NDKBIN/llvm-ranlib $NDKBIN/aarch64-linux-android-ranlib
-          ln -sf $NDKBIN/llvm-nm     $NDKBIN/aarch64-linux-android-nm
-          ln -sf $NDKBIN/llvm-strip  $NDKBIN/aarch64-linux-android-strip
-          ln -sf $NDKBIN/llvm-objdump $NDKBIN/aarch64-linux-android-objdump
-          ls -l "$NDKBIN/aarch64-linux-android-clang"
-          aarch64-linux-android-clang --version
-          ./Configure android-arm64 -D__ANDROID_API__=24 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls
+          # NDK r27 ships versioned clang wrappers (aarch64-linux-android24-clang)
+          # that ALREADY embed --target=aarch64-linux-android24 + the bionic sysroot.
+          # We therefore use the generic 'linux64-aarch64' target and set CC to that
+          # wrapper. This sidesteps OpenSSL's 15-android.conf 'android-arm64' probe,
+          # which is broken for NDK r27 (no top-level $ndk/sysroot and no legacy
+          # aarch64-linux-android-gcc), and produces a libcrypto.a linked against
+          # bionic libc — exactly what open-iscsi needs on Android.
+          export CC=aarch64-linux-android24-clang
+          export CXX=aarch64-linux-android24-clang++
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          export NM=llvm-nm
+          ./Configure linux64-aarch64 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls no-afalgeng no-ui-console no-devcryptoeng
           make -j"$(nproc)"
           make install_sw
           ls -l /opt/ossl/lib/libcrypto.a
+          echo "=== verify libcrypto.a is aarch64 / bionic ==="
+          llvm-readelf -h /opt/ossl/lib/libcrypto.a 2>/dev/null | grep -i 'machine\|class' | head -1 || true
 
       - name: Clone open-iscsi 2.1.10
         run: git clone --depth 1 --branch 2.1.10 https://github.com/open-iscsi/open-iscsi.git
