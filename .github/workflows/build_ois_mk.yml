@@ -39,35 +39,31 @@ jobs:
           export PATH="$NDKBIN:$PATH"
           SYSROOT=$(cd "$NDKBIN/../sysroot" 2>/dev/null && pwd)
           echo "SYSROOT=$SYSROOT"
-          # NDK only ships clang wrappers whose name encodes the target triple+API,
-          # and they parse their OWN filename. A symlink named aarch64-linux-android-gcc
-          # therefore fails (no API suffix). OpenSSL's android-arm64 target hard-requires
-          # gcc-named binaries on $PATH, so we write our own thin wrappers that call the
-          # real clang with the correct --target/--sysroot.
-          # Write thin wrappers with a column-0 shebang (printf avoids YAML indent).
-          printf '#!/bin/sh\n' > "$NDKBIN/aarch64-linux-android-gcc"
-          printf 'exec "%s/clang" --target=aarch64-linux-android24 --sysroot=%s -fuse-ld=lld "$@"\n' "$NDKBIN" "$SYSROOT" >> "$NDKBIN/aarch64-linux-android-gcc"
-          printf '#!/bin/sh\n' > "$NDKBIN/aarch64-linux-android-g++"
-          printf 'exec "%s/clang++" --target=aarch64-linux-android24 --sysroot=%s -fuse-ld=lld "$@"\n' "$NDKBIN" "$SYSROOT" >> "$NDKBIN/aarch64-linux-android-g++"
-          chmod +x "$NDKBIN/aarch64-linux-android-gcc" "$NDKBIN/aarch64-linux-android-g++"
+          # OpenSSL's android-arm64 target (15-android.conf) requires gcc/clang-named
+          # binaries whose resolved path lives under $ANDROID_NDK. NDK r27 only ships
+          # VERSIONED clang wrappers (aarch64-linux-android24-clang), so neither
+          # aarch64-linux-android-gcc nor aarch64-linux-android-clang exists. The helper
+          # probes whichever matches $CC (default "clang") and dies if the resolved path
+          # is not under $ndk. We write thin wrappers for BOTH names (column-0 shebang via
+          # printf) that call the real clang with --target=aarch64-linux-android24 + bionic
+          # sysroot; their location under $ndk satisfies the probe.
+          for t in gcc g++ clang clang++; do
+            case $t in
+              gcc|clang)   real=clang;;
+              g++|clang++) real=clang++;;
+            esac
+            printf '#!/bin/sh\n' > "$NDKBIN/aarch64-linux-android-$t"
+            printf 'exec "%s/%s" --target=aarch64-linux-android24 --sysroot=%s -fuse-ld=lld "$@"\n' "$NDKBIN" "$real" "$SYSROOT" >> "$NDKBIN/aarch64-linux-android-$t"
+            chmod +x "$NDKBIN/aarch64-linux-android-$t"
+          done
           ln -sf $NDKBIN/llvm-ar     $NDKBIN/aarch64-linux-android-ar
           ln -sf $NDKBIN/llvm-ranlib $NDKBIN/aarch64-linux-android-ranlib
           ln -sf $NDKBIN/llvm-nm     $NDKBIN/aarch64-linux-android-nm
           ln -sf $NDKBIN/llvm-strip  $NDKBIN/aarch64-linux-android-strip
           ln -sf $NDKBIN/llvm-objdump $NDKBIN/aarch64-linux-android-objdump
-          ls -l "$NDKBIN/aarch64-linux-android-gcc"
-          aarch64-linux-android-gcc --version
-          # Use the generic linux64-aarch64 target to SKIP OpenSSL's NDK gcc probe
-          # (it rejects clang-based wrappers). Our wrappers already force
-          # --target=aarch64-linux-android24 + bionic sysroot, so the produced
-          # libcrypto.a is bionic-compatible. OpenSSL 3.3.2 Configure does NOT accept
-          # CC/AR/RANLIB/NM as command-line assignments (they trip the usage error),
-          # so export them as environment variables instead.
-          export CC=aarch64-linux-android-gcc
-          export AR=aarch64-linux-android-ar
-          export RANLIB=aarch64-linux-android-ranlib
-          export NM=aarch64-linux-android-nm
-          ./Configure linux64-aarch64 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls
+          ls -l "$NDKBIN/aarch64-linux-android-clang"
+          aarch64-linux-android-clang --version
+          ./Configure android-arm64 -D__ANDROID_API__=24 --prefix=/opt/ossl no-shared no-tests no-dso no-dtls
           make -j"$(nproc)"
           make install_sw
           ls -l /opt/ossl/lib/libcrypto.a
