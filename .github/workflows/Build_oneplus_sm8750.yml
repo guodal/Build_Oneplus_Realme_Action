@@ -606,8 +606,19 @@ jobs:
           # iSCSI initiator over TCP
           echo "CONFIG_ISCSI_TCP=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_SCSI_ISCSI_ATTRS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # iSCSI Boot Firmware Table (iBFT) 支持：内核可读取固件写入的 iBFT 并从 iSCSI 盘做根启动(SAN boot)。
+          # 注意：手机无标准 iBFT 固件，单开此项不会自动网络启动；需配合 root=iscsi: cmdline 或早期用户态连接。
+          echo "CONFIG_ISCSI_BOOT_SYSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
           # ext3 文件系统挂载支持
           echo "CONFIG_EXT3_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # ===== Android 容器支持 (AnBox/Waydroid 所需, 与当前 Re-Kernel 一致) =====
+          # binder IPC + binderfs (安卓容器跨进程通信基础, 当前 Re-Kernel 已开启)
+          echo "CONFIG_ANDROID_BINDER_IPC=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_ANDROID_BINDERFS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo 'CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"' >> ./common/arch/arm64/configs/gki_defconfig
+          # ashmem (安卓容器共享内存, 当前 Re-Kernel 已开启)
+          echo "CONFIG_ASHMEM=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # ===== Android 容器支持结束 =====
           # 注：以下项原厂内核实测已开启，无需重复追加
           #   CONFIG_WIREGUARD=y / CONFIG_TCP_CONG_BBR=y
           #   CONFIG_EXT4_FS=y / CONFIG_EXT4_FS_POSIX_ACL=y / CONFIG_EXT4_FS_SECURITY=y
